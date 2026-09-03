@@ -1,0 +1,16 @@
+{
+  "scriptFile" : "../funciones-backend-1.0-SNAPSHOT.jar",
+  "entryPoint" : "com.duoc.cloud.RolesFunction.run",
+  "bindings" : [ {
+    "type" : "httpTrigger",
+    "direction" : "in",
+    "name" : "req",
+    "route" : "roles",
+    "methods" : [ "GET", "POST" ],
+    "authLevel" : "ANONYMOUS"
+  }, {
+    "type" : "http",
+    "direction" : "out",
+    "name" : "$return"
+  } ]
+}
