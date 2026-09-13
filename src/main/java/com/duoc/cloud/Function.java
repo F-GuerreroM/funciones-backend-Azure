@@ -9,8 +9,12 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class Function {
 
@@ -18,7 +22,6 @@ public class Function {
     private static final String DB_PASSWORD = "Duoc1234$$3210";
     private static final String DB_URL = "jdbc:oracle:thin:@bdmicroservicios_low";    
 
-    // Método para asegurar que el wallet esté disponible en cualquier entorno (Local o Azure Cloud)
     private static String getWalletPath() {
         try {
             File tempDir = new File(System.getProperty("java.io.tmpdir"), "wallet");
@@ -35,25 +38,28 @@ public class Function {
             }
             return tempDir.getAbsolutePath().replace("\\", "/");
         } catch (Exception e) {
-            return "C:/wallet"; // Fallback por si acaso
+            return "C:/wallet"; 
         }
+    }
+
+    // Función Helper para extraer datos del JSON sin usar librerías externas
+    private String extraerValorJson(String json, String key) {
+        if (json == null || json.isEmpty()) return null;
+        Matcher matcher = Pattern.compile("\"" + key + "\"\\s*:\\s*\"?([^\"},]+)\"?").matcher(json);
+        return matcher.find() ? matcher.group(1).trim() : null;
     }
 
     @FunctionName("UsuariosFunction")
     public HttpResponseMessage run(
             @HttpTrigger(
                 name = "req",
-                methods = {HttpMethod.GET, HttpMethod.POST},
+                methods = {HttpMethod.GET, HttpMethod.POST, HttpMethod.PUT, HttpMethod.DELETE},
                 authLevel = AuthorizationLevel.ANONYMOUS,
                 route = "usuarios") 
             HttpRequestMessage<Optional<String>> request,
             final ExecutionContext context) {
 
-        context.getLogger().info("Iniciando ejecución de UsuariosFunction. Método: " + request.getHttpMethod());
-
-        HttpMethod metodo = request.getHttpMethod();
         String walletPath = getWalletPath();
-
         java.util.Properties props = new java.util.Properties();
         props.setProperty("user", DB_USER);
         props.setProperty("password", DB_PASSWORD);
@@ -61,31 +67,118 @@ public class Function {
         props.setProperty("oracle.net.wallet_location", "(SOURCE=(METHOD=FILE)(METHOD_DATA=(DIRECTORY=" + walletPath + ")))");
 
         try (Connection conn = DriverManager.getConnection(DB_URL, props)) {
-            context.getLogger().info("Conexión a Oracle exitosa.");
-
-            if (metodo.equals(HttpMethod.GET)) {
-                context.getLogger().info("Ejecutando consulta de usuarios...");
-                return request.createResponseBuilder(HttpStatus.OK)
-                        .header("Content-Type", "application/json")
-                        .body("[{\"mensaje\":\"Lista de usuarios obtenida exitosamente desde Oracle Cloud\"}]")
-                        .build();
-            } 
             
-            if (metodo.equals(HttpMethod.POST)) {
-                String body = request.getBody().orElse("");
-                context.getLogger().info("Creando nuevo usuario: " + body);
-                return request.createResponseBuilder(HttpStatus.CREATED)
-                        .body("Usuario creado con éxito en la base de datos.")
-                        .build();
+            switch (request.getHttpMethod()) {
+                case GET:
+                    return handleGet(request, conn);
+                case POST:
+                    return handlePost(request, conn);
+                case PUT:
+                    return handlePut(request, conn);
+                case DELETE:
+                    return handleDelete(request, conn);
+                default:
+                    return request.createResponseBuilder(HttpStatus.BAD_REQUEST).body("Método no soportado").build();
             }
 
         } catch (SQLException e) {
-            context.getLogger().severe("Error crítico al conectar o consultar Oracle: " + e.getMessage());
+            context.getLogger().severe("Error BD: " + e.getMessage());
             return request.createResponseBuilder(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Error interno en el servidor de base de datos: " + e.getMessage())
+                    .body("Error BD: " + e.getMessage()).build();
+        }
+    }
+
+    // ==========================================
+    //            MÉTODOS DEL CRUD
+    // ==========================================
+
+    private HttpResponseMessage handleGet(HttpRequestMessage<Optional<String>> request, Connection conn) throws SQLException {
+        StringBuilder jsonResult = new StringBuilder("[");
+        String sql = "SELECT ID_USUARIO, NOMBRE, CORREO, ID_ROL FROM USUARIOS";
+        
+        try (PreparedStatement pstmt = conn.prepareStatement(sql);
+             ResultSet rs = pstmt.executeQuery()) {
+            
+            boolean first = true;
+            while (rs.next()) {
+                if (!first) jsonResult.append(",");
+                jsonResult.append("{")
+                          .append("\"id_usuario\":\"").append(rs.getString("ID_USUARIO")).append("\",")
+                          .append("\"nombre\":\"").append(rs.getString("NOMBRE")).append("\",")
+                          .append("\"correo\":\"").append(rs.getString("CORREO")).append("\",")
+                          .append("\"id_rol\":\"").append(rs.getString("ID_ROL")).append("\"")
+                          .append("}");
+                first = false;
+            }
+            jsonResult.append("]");
+            
+            return request.createResponseBuilder(HttpStatus.OK)
+                    .header("Content-Type", "application/json")
+                    .body(jsonResult.toString())
                     .build();
         }
+    }
 
-        return request.createResponseBuilder(HttpStatus.BAD_REQUEST).body("Método no soportado").build();
+   private HttpResponseMessage handlePost(HttpRequestMessage<Optional<String>> request, Connection conn) throws SQLException {
+        String body = request.getBody().orElse("");
+        String nombre = extraerValorJson(body, "nombre");
+        String correo = extraerValorJson(body, "correo");
+        String idRol = extraerValorJson(body, "id_rol");
+        if (idRol == null) idRol = "1"; // Rol por defecto
+        
+        // CORRECCIÓN: Le quitamos el ID_USUARIO para que Oracle lo autogenere
+        String sql = "INSERT INTO USUARIOS (NOMBRE, CORREO, ID_ROL) VALUES (?, ?, ?)";
+        
+        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, nombre);
+            pstmt.setString(2, correo);
+            pstmt.setString(3, idRol);
+            pstmt.executeUpdate();
+            
+            return request.createResponseBuilder(HttpStatus.CREATED)
+                    .header("Content-Type", "application/json")
+                    .body("{\"mensaje\":\"Usuario creado exitosamente\"}").build();
+        }
+    }
+
+    private HttpResponseMessage handlePut(HttpRequestMessage<Optional<String>> request, Connection conn) throws SQLException {
+        String body = request.getBody().orElse("");
+        String idUsuario = extraerValorJson(body, "id_usuario");
+        if (idUsuario == null) idUsuario = extraerValorJson(body, "id");
+        
+        String nombre = extraerValorJson(body, "nombre");
+        String correo = extraerValorJson(body, "correo");
+        
+        String sql = "UPDATE USUARIOS SET NOMBRE = ?, CORREO = ? WHERE ID_USUARIO = ?";
+        
+        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, nombre);
+            pstmt.setString(2, correo);
+            pstmt.setString(3, idUsuario);
+            int rows = pstmt.executeUpdate();
+            
+            if (rows > 0) {
+                return request.createResponseBuilder(HttpStatus.OK).body("{\"mensaje\":\"Usuario actualizado\"}").build();
+            } else {
+                return request.createResponseBuilder(HttpStatus.NOT_FOUND).body("{\"mensaje\":\"Usuario no encontrado\"}").build();
+            }
+        }
+    }
+
+    private HttpResponseMessage handleDelete(HttpRequestMessage<Optional<String>> request, Connection conn) throws SQLException {
+        String body = request.getBody().orElse("");
+        String idUsuario = extraerValorJson(body, "id_usuario");
+        if (idUsuario == null) idUsuario = extraerValorJson(body, "id");
+        
+        if (idUsuario == null) {
+            return request.createResponseBuilder(HttpStatus.BAD_REQUEST).body("{\"mensaje\":\"Falta el ID del usuario\"}").build();
+        }
+        
+        String sql = "DELETE FROM USUARIOS WHERE ID_USUARIO = ?";
+        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, idUsuario);
+            pstmt.executeUpdate();
+            return request.createResponseBuilder(HttpStatus.OK).body("{\"mensaje\":\"Usuario eliminado\"}").build();
+        }
     }
 }

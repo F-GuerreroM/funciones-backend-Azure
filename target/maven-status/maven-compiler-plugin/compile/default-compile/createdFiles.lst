@@ -1,2 +1,6 @@
+com\duoc\cloud\UsuariosGraphQLFunction.class
+com\duoc\cloud\Function$1.class
 com\duoc\cloud\Function.class
+com\duoc\cloud\RolesFunction$1.class
 com\duoc\cloud\RolesFunction.class
+com\duoc\cloud\RolesGraphQLFunction.class
