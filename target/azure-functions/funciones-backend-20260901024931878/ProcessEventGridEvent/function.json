@@ -1,0 +1,9 @@
+{
+  "scriptFile" : "../funciones-backend-1.0-SNAPSHOT.jar",
+  "entryPoint" : "com.duoc.cloud.ConsumidorEventosFunction.run",
+  "bindings" : [ {
+    "type" : "eventGridTrigger",
+    "direction" : "in",
+    "name" : "eventGridEvent"
+  } ]
+}

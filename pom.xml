@@ -62,6 +62,16 @@
             <artifactId>graphql-java</artifactId>
             <version>17.3</version>
         </dependency>
+        <dependency>
+            <groupId>com.azure</groupId>
+            <artifactId>azure-messaging-eventgrid</artifactId>
+            <version>4.22.2</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.10.1</version>
+        </dependency>
     </dependencies>
 
     <build>
